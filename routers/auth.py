@@ -38,7 +38,6 @@ def register(data: UsuarioCreate):
             (data.nombre, data.email, data.usuario, hashed)
         )
         user = cur.fetchone()
-        # Crear configuración por defecto
         cur.execute(
             "INSERT INTO configuraciones (usuario_id) VALUES (%s)",
             (user[0],)
@@ -51,7 +50,7 @@ def register(data: UsuarioCreate):
         }
     except Exception as e:
         conn.rollback()
-        raise HTTPException(status_code=400, detail="Usuario o email ya existe")
+        raise HTTPException(status_code=400, detail=str(e))
     finally:
         cur.close()
         conn.close()
