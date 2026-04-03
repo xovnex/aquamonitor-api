@@ -2,7 +2,7 @@
 # routers/auth.py – Registro y login de usuarios
 # ============================================================
 from fastapi import APIRouter, HTTPException
-from passlib.context import CryptContext
+import bcrypt
 from jose import jwt
 from datetime import datetime, timedelta
 import os
@@ -11,10 +11,15 @@ from schemas import UsuarioCreate, LoginRequest, Token
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=12)
 SECRET_KEY = os.getenv("SECRET_KEY", "clave_secreta")
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
 EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 1440))
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+def verify_password(password: str, hashed: str) -> bool:
+    return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
 
 def crear_token(data: dict):
     payload = data.copy()
@@ -32,7 +37,7 @@ def register(data: UsuarioCreate):
     conn = get_connection()
     cur = conn.cursor()
     try:
-        hashed = pwd_context.hash(data.contrasena)
+        hashed = hash_password(data.contrasena)
         cur.execute(
             "INSERT INTO usuarios (nombre, email, usuario, contrasena) VALUES (%s, %s, %s, %s) RETURNING id, nombre, email, usuario",
             (data.nombre, data.email, data.usuario, hashed)
@@ -67,7 +72,7 @@ def login(data: LoginRequest):
     cur.close()
     conn.close()
 
-    if not user or not pwd_context.verify(data.contrasena, user[4]):
+    if not user or not verify_password(data.contrasena, user[4]):
         raise HTTPException(status_code=401, detail="Credenciales incorrectas")
 
     token = crear_token({"sub": str(user[0]), "usuario": user[3]})
