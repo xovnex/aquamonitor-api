@@ -80,3 +80,28 @@ def login(data: LoginRequest):
         "token": token,
         "user": {"id": user[0], "nombre": user[1], "email": user[2]}
     }
+
+@router.post("/token-sensor")
+def token_sensor(data: LoginRequest):
+    """Genera un token permanente para el ESP8266"""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT id, nombre, email, usuario, contrasena FROM usuarios WHERE usuario = %s",
+        (data.usuario,)
+    )
+    user = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    if not user or not verify_password(data.contrasena, user[4]):
+        raise HTTPException(status_code=401, detail="Credenciales incorrectas")
+
+    # Token sin expiración para el sensor
+    payload = {"sub": str(user[0]), "usuario": user[3], "tipo": "sensor"}
+    token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+    return {
+        "token": token,
+        "mensaje": "Token permanente para ESP8266 generado ✅"
+    }
