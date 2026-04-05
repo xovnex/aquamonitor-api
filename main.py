@@ -8,15 +8,11 @@ from routers import auth, consumo, configuracion
 
 app = FastAPI(title="AquaMonitor API", version="1.0.0")
 
-# CORS – permite peticiones desde tu frontend en Vercel
+# CORS – permite peticiones desde cualquier origen
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "https://aquamonitor-six.vercel.app",
-        "https://*.vercel.app",
-    ],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
