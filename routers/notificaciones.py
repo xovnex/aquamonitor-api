@@ -1,29 +1,36 @@
 # ============================================================
-# routers/notificaciones.py – Email (Resend) y WhatsApp
+# routers/notificaciones.py – Email (Brevo) y WhatsApp
 # ============================================================
 import os
 import random
 import string
-import resend
+import requests
 from twilio.rest import Client
 
-resend.api_key     = os.getenv("RESEND_API_KEY")
-TWILIO_SID         = os.getenv("TWILIO_ACCOUNT_SID")
-TWILIO_TOKEN       = os.getenv("TWILIO_AUTH_TOKEN")
-TWILIO_NUMBER      = os.getenv("TWILIO_WHATSAPP_NUMBER")
+BREVO_API_KEY  = os.getenv("BREVO_API_KEY")
+TWILIO_SID     = os.getenv("TWILIO_ACCOUNT_SID")
+TWILIO_TOKEN   = os.getenv("TWILIO_AUTH_TOKEN")
+TWILIO_NUMBER  = os.getenv("TWILIO_WHATSAPP_NUMBER")
 
 def generar_codigo():
     return ''.join(random.choices(string.digits, k=6))
 
 def enviar_email(destinatario: str, asunto: str, cuerpo_html: str):
     try:
-        resend.Emails.send({
-            "from": "AquaMonitor <onboarding@resend.dev>",
-            "to": destinatario,
-            "subject": asunto,
-            "html": cuerpo_html,
-        })
-        return True
+        res = requests.post(
+            "https://api.brevo.com/v3/smtp/email",
+            headers={
+                "api-key": BREVO_API_KEY,
+                "Content-Type": "application/json"
+            },
+            json={
+                "sender": {"name": "AquaMonitor", "email": "golencito88@gmail.com"},
+                "to": [{"email": destinatario}],
+                "subject": asunto,
+                "htmlContent": cuerpo_html
+            }
+        )
+        return res.status_code == 201
     except Exception as e:
         print(f"Error enviando email: {e}")
         return False
