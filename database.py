@@ -24,6 +24,10 @@ def init_db():
             email VARCHAR(100) UNIQUE NOT NULL,
             usuario VARCHAR(50) UNIQUE NOT NULL,
             contrasena VARCHAR(255) NOT NULL,
+            telefono VARCHAR(20),
+            verificado BOOLEAN DEFAULT FALSE,
+            codigo_verificacion VARCHAR(6),
+            codigo_expira TIMESTAMP,
             created_at TIMESTAMP DEFAULT NOW()
         );
     """)

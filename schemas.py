@@ -10,6 +10,7 @@ class UsuarioCreate(BaseModel):
     email: EmailStr
     usuario: str
     contrasena: str
+    telefono: Optional[str] = None
 
 class LoginRequest(BaseModel):
     usuario: str
@@ -18,6 +19,18 @@ class LoginRequest(BaseModel):
 class Token(BaseModel):
     token: str
     user: dict
+
+class VerificarCodigo(BaseModel):
+    email: str
+    codigo: str
+
+class RecuperarPassword(BaseModel):
+    email: str
+
+class ResetPassword(BaseModel):
+    email: str
+    codigo: str
+    nueva_contrasena: str
 
 class ConsumoHoy(BaseModel):
     fecha: str

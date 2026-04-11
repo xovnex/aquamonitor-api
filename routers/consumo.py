@@ -1,10 +1,11 @@
 # ============================================================
-# routers/consumo.py – Endpoints de consumo de agua
+# routers/consumo.py – Endpoints de consumo + alertas
 # ============================================================
 from fastapi import APIRouter, HTTPException, Header
 from datetime import date, timedelta
 from database import get_connection
 from routers.auth import verificar_token
+from routers.notificaciones import alerta_consumo_alto, alerta_fuga_detectada
 from schemas import SensorData
 
 router = APIRouter(prefix="/consumo", tags=["consumo"])
@@ -26,11 +27,16 @@ def get_config(cur, usuario_id):
     cfg = cur.fetchone()
     return cfg if cfg else (200, 3)
 
+def get_telefono(cur, usuario_id):
+    cur.execute("SELECT telefono FROM usuarios WHERE id = %s", (usuario_id,))
+    row = cur.fetchone()
+    return row[0] if row and row[0] else None
+
 @router.get("/hoy")
 def consumo_hoy(authorization: str = Header(None)):
     usuario_id = get_user_id(authorization)
     conn = get_connection()
-    cur = conn.cursor()
+    cur  = conn.cursor()
 
     limite, personas = get_config(cur, usuario_id)
     hoy = date.today()
@@ -44,8 +50,8 @@ def consumo_hoy(authorization: str = Header(None)):
     conn.close()
 
     litros = row[0] if row else 0
-    flujo = row[1] if row else 0
-    temp = row[2] if row else 18
+    flujo  = row[1] if row else 0
+    temp   = row[2] if row else 18
 
     return {
         "fecha": str(hoy),
@@ -66,7 +72,7 @@ def consumo_hoy(authorization: str = Header(None)):
 def consumo_semanal(authorization: str = Header(None)):
     usuario_id = get_user_id(authorization)
     conn = get_connection()
-    cur = conn.cursor()
+    cur  = conn.cursor()
 
     limite, _ = get_config(cur, usuario_id)
     hoy = date.today()
@@ -93,7 +99,7 @@ def consumo_semanal(authorization: str = Header(None)):
 def consumo_mensual(authorization: str = Header(None)):
     usuario_id = get_user_id(authorization)
     conn = get_connection()
-    cur = conn.cursor()
+    cur  = conn.cursor()
 
     limite, _ = get_config(cur, usuario_id)
     hoy = date.today()
@@ -118,11 +124,10 @@ def consumo_mensual(authorization: str = Header(None)):
 
 @router.post("/sensor")
 def recibir_sensor(data: SensorData, authorization: str = Header(None)):
-    """Endpoint para que el ESP32 envíe datos"""
     usuario_id = get_user_id(authorization)
     conn = get_connection()
-    cur = conn.cursor()
-    hoy = date.today()
+    cur  = conn.cursor()
+    hoy  = date.today()
 
     cur.execute("""
         INSERT INTO consumos (usuario_id, fecha, litros, flujo_actual, temperatura_agua)
@@ -134,7 +139,27 @@ def recibir_sensor(data: SensorData, authorization: str = Header(None)):
             temperatura_agua = EXCLUDED.temperatura_agua
     """, (usuario_id, hoy, data.litros, data.flujo_actual, data.temperatura_agua))
 
+    # Verificar si supera el límite para mandar alerta
+    limite, _ = get_config(cur, usuario_id)
+    cur.execute(
+        "SELECT litros FROM consumos WHERE usuario_id = %s AND fecha = %s",
+        (usuario_id, hoy)
+    )
+    row = cur.fetchone()
+    litros_total = row[0] if row else 0
+
+    telefono = get_telefono(cur, usuario_id)
+
     conn.commit()
     cur.close()
     conn.close()
+
+    # Mandar alerta WhatsApp si supera límite
+    if telefono and litros_total > limite:
+        alerta_consumo_alto(telefono, litros_total, limite)
+
+    # Mandar alerta si detecta fuga (flujo > 2.5 L/min)
+    if telefono and data.flujo_actual > 2.5:
+        alerta_fuga_detectada(telefono, data.flujo_actual)
+
     return {"success": True, "message": "Datos recibidos"}
