@@ -8,3 +8,4 @@ python-jose[cryptography]
 pydantic
 pydantic[email]
 twilio
+resend
