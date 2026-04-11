@@ -29,8 +29,9 @@ def crear_token(data: dict):
 
 def verificar_token(token: str):
     try:
-        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    except:
+        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM], options={"verify_exp": False})
+    except Exception as e:
+        print(f"Error verificando token: {e}")
         raise HTTPException(status_code=401, detail="Token inválido")
 
 @router.post("/register")
@@ -52,7 +53,6 @@ def register(data: UsuarioCreate):
         cur.execute("INSERT INTO configuraciones (usuario_id) VALUES (%s)", (user[0],))
         conn.commit()
 
-        # Manda código de verificación al email
         enviar_codigo_verificacion(data.email, codigo)
 
         return {
