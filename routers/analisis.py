@@ -71,7 +71,7 @@ Datos del usuario:
 - Día de menor consumo: {min_dia['dia']} con {min_dia['litros']} litros
 - Días que superaron el límite: {len(dias_excedidos)}
 
-Analiza si el consumo es bueno o malo, explica por qué, menciona el día más destacado y da una recomendación práctica.
+Analiza si el consumo es bueno o malo, explica por qué, menciona el día más destacado y da una recomendación práctica..
 """
 
     try:
