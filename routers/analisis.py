@@ -1,16 +1,16 @@
 # ============================================================
-# routers/analisis.py – Análisis inteligente con OpenAI
+# routers/analisis.py – Análisis inteligente con Groq (gratis)
 # ============================================================
 from fastapi import APIRouter, Header, HTTPException
 from datetime import date, timedelta
 from database import get_connection
 from routers.auth import verificar_token
-from openai import OpenAI
+from groq import Groq
 import os
 
 router = APIRouter(prefix="/analisis", tags=["analisis"])
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 def get_user_id(authorization: str):
     if not authorization or not authorization.startswith("Bearer "):
@@ -26,7 +26,6 @@ def analisis_semanal(authorization: str = Header(None)):
     cur  = conn.cursor()
     hoy  = date.today()
 
-    # Obtiene datos de los últimos 7 días
     datos_semana = []
     for i in range(6, -1, -1):
         dia = hoy - timedelta(days=i)
@@ -41,28 +40,25 @@ def analisis_semanal(authorization: str = Header(None)):
             "litros": round(row[0], 2) if row else 0
         })
 
-    # Obtiene configuración del usuario
     cur.execute(
         "SELECT limite_diario, personas FROM configuraciones WHERE usuario_id = %s",
         (usuario_id,)
     )
     cfg = cur.fetchone()
-    limite  = cfg[0] if cfg else 200
+    limite   = cfg[0] if cfg else 200
     personas = cfg[1] if cfg else 1
 
     cur.close()
     conn.close()
 
-    # Calcula métricas básicas
     total    = sum(d["litros"] for d in datos_semana)
     promedio = round(total / 7, 2)
     max_dia  = max(datos_semana, key=lambda x: x["litros"])
     min_dia  = min(datos_semana, key=lambda x: x["litros"])
     dias_excedidos = [d for d in datos_semana if d["litros"] > limite]
 
-    # Prompt para OpenAI
     prompt = f"""
-Eres un asistente experto en ahorro de agua para hogares. Analiza el siguiente consumo semanal de agua y da un análisis claro, útil y motivador en español. 
+Eres un asistente experto en ahorro de agua para hogares. Analiza el siguiente consumo semanal de agua y da un análisis claro, útil y motivador en español.
 Sé conciso (máximo 4 oraciones). No uses listas ni bullet points, solo párrafos cortos.
 
 Datos del usuario:
@@ -80,14 +76,14 @@ Analiza si el consumo es bueno o malo, explica por qué, menciona el día más d
 
     try:
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="llama3-8b-8192",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=300,
             temperature=0.7,
         )
         analisis = response.choices[0].message.content.strip()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error con OpenAI: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error con Groq: {str(e)}")
 
     return {
         "analisis": analisis,
