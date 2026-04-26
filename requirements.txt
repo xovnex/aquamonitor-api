@@ -9,4 +9,4 @@ pydantic
 pydantic[email]
 twilio
 requests
-openai
+groq
