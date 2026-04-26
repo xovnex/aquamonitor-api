@@ -21,11 +21,11 @@ def get_user_id(authorization: str):
 
 def get_config(cur, usuario_id):
     cur.execute(
-        "SELECT limite_diario, personas FROM configuraciones WHERE usuario_id = %s",
+        "SELECT limite_diario, personas, notificaciones, alerta_fuga FROM configuraciones WHERE usuario_id = %s",
         (usuario_id,)
     )
     cfg = cur.fetchone()
-    return cfg if cfg else (200, 3)
+    return cfg if cfg else (200, 3, True, True)
 
 def get_telefono(cur, usuario_id):
     cur.execute("SELECT telefono FROM usuarios WHERE id = %s", (usuario_id,))
@@ -38,7 +38,8 @@ def consumo_hoy(authorization: str = Header(None)):
     conn = get_connection()
     cur  = conn.cursor()
 
-    limite, personas = get_config(cur, usuario_id)
+    cfg = get_config(cur, usuario_id)
+    limite, personas = cfg[0], cfg[1]
     hoy = date.today()
 
     cur.execute(
@@ -49,17 +50,13 @@ def consumo_hoy(authorization: str = Header(None)):
     cur.close()
     conn.close()
 
-    litros = row[0] if row else 0
-    flujo  = row[1] if row else 0
-    temp   = row[2] if row else 18
-
     return {
         "fecha": str(hoy),
-        "litros": litros,
+        "litros": row[0] if row else 0,
         "limite": limite,
         "personas": personas,
-        "flujoActual": flujo,
-        "temperaturaAgua": temp,
+        "flujoActual": row[1] if row else 0,
+        "temperaturaAgua": row[2] if row else 18,
         "sensor": {
             "id": "ESP32-001",
             "estado": "online",
@@ -74,7 +71,8 @@ def consumo_semanal(authorization: str = Header(None)):
     conn = get_connection()
     cur  = conn.cursor()
 
-    limite, _ = get_config(cur, usuario_id)
+    cfg = get_config(cur, usuario_id)
+    limite = cfg[0]
     hoy = date.today()
 
     resultado = []
@@ -101,7 +99,8 @@ def consumo_mensual(authorization: str = Header(None)):
     conn = get_connection()
     cur  = conn.cursor()
 
-    limite, _ = get_config(cur, usuario_id)
+    cfg = get_config(cur, usuario_id)
+    limite = cfg[0]
     hoy = date.today()
 
     resultado = []
@@ -139,8 +138,13 @@ def recibir_sensor(data: SensorData, authorization: str = Header(None)):
             temperatura_agua = EXCLUDED.temperatura_agua
     """, (usuario_id, hoy, data.litros, data.flujo_actual, data.temperatura_agua))
 
-    # Verificar si supera el límite para mandar alerta
-    limite, _ = get_config(cur, usuario_id)
+    # Lee configuración del usuario
+    cfg = get_config(cur, usuario_id)
+    limite         = cfg[0]
+    notificaciones = cfg[2]  # ← toggle notificaciones push
+    alerta_fuga    = cfg[3]  # ← toggle detección de fuga
+
+    # Obtiene total acumulado del día
     cur.execute(
         "SELECT litros FROM consumos WHERE usuario_id = %s AND fecha = %s",
         (usuario_id, hoy)
@@ -154,12 +158,12 @@ def recibir_sensor(data: SensorData, authorization: str = Header(None)):
     cur.close()
     conn.close()
 
-    # Mandar alerta WhatsApp si supera límite
-    if telefono and litros_total > limite:
-        alerta_consumo_alto(telefono, litros_total, limite)
+    # ── Manda WhatsApp solo si el toggle está activado ──
+    if telefono:
+        if notificaciones and litros_total > limite:
+            alerta_consumo_alto(telefono, litros_total, limite)
 
-    # Mandar alerta si detecta fuga (flujo > 2.5 L/min)
-    if telefono and data.flujo_actual > 2.5:
-        alerta_fuga_detectada(telefono, data.flujo_actual)
+        if alerta_fuga and data.flujo_actual > 2.5:
+            alerta_fuga_detectada(telefono, data.flujo_actual)
 
     return {"success": True, "message": "Datos recibidos"}
