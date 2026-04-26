@@ -4,7 +4,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import init_db
-from routers import auth, consumo, configuracion
+from routers import auth, consumo, configuracion, analisis
 
 app = FastAPI(title="AquaMonitor API", version="1.0.0")
 
@@ -26,6 +26,7 @@ def startup():
 app.include_router(auth.router)
 app.include_router(consumo.router)
 app.include_router(configuracion.router)
+app.include_router(analisis.router)
 
 @app.get("/")
 def root():
