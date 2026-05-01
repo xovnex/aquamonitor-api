@@ -70,6 +70,20 @@ def init_db():
         );
     """)
 
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS registros_pendientes (
+            id SERIAL PRIMARY KEY,
+            nombre VARCHAR(100) NOT NULL,
+            email VARCHAR(100) UNIQUE NOT NULL,
+            usuario VARCHAR(50) NOT NULL,
+            contrasena VARCHAR(255) NOT NULL,
+            telefono VARCHAR(20),
+            codigo VARCHAR(6),
+            expira TIMESTAMP,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+    """)
+
     conn.commit()
     cur.close()
     release_connection(conn)

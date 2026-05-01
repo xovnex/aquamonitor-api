@@ -39,25 +39,40 @@ def register(data: UsuarioCreate):
     conn = get_connection()
     cur  = conn.cursor()
     try:
-        hashed = hash_password(data.contrasena)
+        # Verificar que el usuario o email no exista ya
+        cur.execute(
+            "SELECT id FROM usuarios WHERE email = %s OR usuario = %s",
+            (data.email, data.usuario)
+        )
+        if cur.fetchone():
+            raise HTTPException(status_code=400, detail="Usuario o email ya existe")
+
         codigo = generar_codigo()
         expira = datetime.utcnow() + timedelta(minutes=10)
 
-        cur.execute("""
-            INSERT INTO usuarios (nombre, email, usuario, contrasena, telefono, verificado, codigo_verificacion, codigo_expira)
-            VALUES (%s, %s, %s, %s, %s, FALSE, %s, %s)
-            RETURNING id, nombre, email, usuario
-        """, (data.nombre, data.email, data.usuario, hashed, data.telefono, codigo, expira))
-
-        user = cur.fetchone()
-        cur.execute("INSERT INTO configuraciones (usuario_id) VALUES (%s)", (user[0],))
-        conn.commit()
+        # Guarda temporalmente en memoria — NO en Neon todavía
+        # Solo manda el código al email
         enviar_codigo_verificacion(data.email, codigo)
+
+        # Guarda en una tabla temporal
+        cur.execute("""
+            INSERT INTO registros_pendientes 
+            (nombre, email, usuario, contrasena, telefono, codigo, expira)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (email) DO UPDATE SET
+                codigo = EXCLUDED.codigo,
+                expira = EXCLUDED.expira
+        """, (data.nombre, data.email, data.usuario, 
+              hash_password(data.contrasena), data.telefono, codigo, expira))
+        conn.commit()
+
         return {
-            "mensaje": "Registro exitoso. Revisa tu email para verificar tu cuenta.",
+            "mensaje": "Revisa tu email para verificar tu cuenta.",
             "email": data.email,
             "requiere_verificacion": True
         }
+    except HTTPException:
+        raise
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=400, detail=str(e))
@@ -70,21 +85,43 @@ def verificar(data: VerificarCodigo):
     conn = get_connection()
     cur  = conn.cursor()
     try:
+        # Busca en registros pendientes
         cur.execute(
-            "SELECT id, nombre, email, usuario, codigo_verificacion, codigo_expira FROM usuarios WHERE email = %s",
+            "SELECT nombre, email, usuario, contrasena, telefono, codigo, expira FROM registros_pendientes WHERE email = %s",
             (data.email,)
         )
-        user = cur.fetchone()
-        if not user:
-            raise HTTPException(status_code=404, detail="Usuario no encontrado")
-        if user[4] != data.codigo:
+        pendiente = cur.fetchone()
+
+        if not pendiente:
+            raise HTTPException(status_code=404, detail="Solicitud no encontrada o ya verificada")
+        if pendiente[5] != data.codigo:
             raise HTTPException(status_code=400, detail="Código incorrecto")
-        if datetime.utcnow() > user[5]:
+        if datetime.utcnow() > pendiente[6]:
             raise HTTPException(status_code=400, detail="Código expirado, solicita uno nuevo")
-        cur.execute("UPDATE usuarios SET verificado = TRUE, codigo_verificacion = NULL WHERE id = %s", (user[0],))
+
+        # Ahora sí guarda en usuarios
+        cur.execute("""
+            INSERT INTO usuarios (nombre, email, usuario, contrasena, telefono, verificado)
+            VALUES (%s, %s, %s, %s, %s, TRUE)
+            RETURNING id, nombre, email, usuario
+        """, (pendiente[0], pendiente[1], pendiente[2], pendiente[3], pendiente[4]))
+        user = cur.fetchone()
+
+        # Crea configuración por defecto
+        cur.execute("INSERT INTO configuraciones (usuario_id) VALUES (%s)", (user[0],))
+
+        # Elimina el registro pendiente
+        cur.execute("DELETE FROM registros_pendientes WHERE email = %s", (data.email,))
+
         conn.commit()
+
         token = crear_token({"sub": str(user[0]), "usuario": user[3]})
         return {"token": token, "user": {"id": user[0], "nombre": user[1], "email": user[2]}}
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
     finally:
         cur.close()
         release_connection(conn)
