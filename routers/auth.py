@@ -6,7 +6,7 @@ import bcrypt
 from jose import jwt
 from datetime import datetime, timedelta
 import os
-from database import get_connection
+from database import get_connection, release_connection
 from schemas import UsuarioCreate, LoginRequest, VerificarCodigo, RecuperarPassword, ResetPassword
 from routers.notificaciones import generar_codigo, enviar_codigo_verificacion, enviar_codigo_reset
 
@@ -52,9 +52,7 @@ def register(data: UsuarioCreate):
         user = cur.fetchone()
         cur.execute("INSERT INTO configuraciones (usuario_id) VALUES (%s)", (user[0],))
         conn.commit()
-
         enviar_codigo_verificacion(data.email, codigo)
-
         return {
             "mensaje": "Registro exitoso. Revisa tu email para verificar tu cuenta.",
             "email": data.email,
@@ -65,153 +63,138 @@ def register(data: UsuarioCreate):
         raise HTTPException(status_code=400, detail=str(e))
     finally:
         cur.close()
-        conn.close()
+        release_connection(conn)
 
 @router.post("/verificar")
 def verificar(data: VerificarCodigo):
     conn = get_connection()
     cur  = conn.cursor()
-    cur.execute(
-        "SELECT id, nombre, email, usuario, codigo_verificacion, codigo_expira FROM usuarios WHERE email = %s",
-        (data.email,)
-    )
-    user = cur.fetchone()
-
-    if not user:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
-
-    if user[4] != data.codigo:
-        raise HTTPException(status_code=400, detail="Código incorrecto")
-
-    if datetime.utcnow() > user[5]:
-        raise HTTPException(status_code=400, detail="Código expirado, solicita uno nuevo")
-
-    cur.execute("UPDATE usuarios SET verificado = TRUE, codigo_verificacion = NULL WHERE id = %s", (user[0],))
-    conn.commit()
-    cur.close()
-    conn.close()
-
-    token = crear_token({"sub": str(user[0]), "usuario": user[3]})
-    return {
-        "token": token,
-        "user": {"id": user[0], "nombre": user[1], "email": user[2]}
-    }
+    try:
+        cur.execute(
+            "SELECT id, nombre, email, usuario, codigo_verificacion, codigo_expira FROM usuarios WHERE email = %s",
+            (data.email,)
+        )
+        user = cur.fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        if user[4] != data.codigo:
+            raise HTTPException(status_code=400, detail="Código incorrecto")
+        if datetime.utcnow() > user[5]:
+            raise HTTPException(status_code=400, detail="Código expirado, solicita uno nuevo")
+        cur.execute("UPDATE usuarios SET verificado = TRUE, codigo_verificacion = NULL WHERE id = %s", (user[0],))
+        conn.commit()
+        token = crear_token({"sub": str(user[0]), "usuario": user[3]})
+        return {"token": token, "user": {"id": user[0], "nombre": user[1], "email": user[2]}}
+    finally:
+        cur.close()
+        release_connection(conn)
 
 @router.post("/reenviar-codigo")
 def reenviar_codigo(data: RecuperarPassword):
     conn = get_connection()
     cur  = conn.cursor()
-    cur.execute("SELECT id, email FROM usuarios WHERE email = %s", (data.email,))
-    user = cur.fetchone()
-
-    if not user:
-        raise HTTPException(status_code=404, detail="Email no encontrado")
-
-    codigo = generar_codigo()
-    expira = datetime.utcnow() + timedelta(minutes=10)
-    cur.execute(
-        "UPDATE usuarios SET codigo_verificacion = %s, codigo_expira = %s WHERE id = %s",
-        (codigo, expira, user[0])
-    )
-    conn.commit()
-    cur.close()
-    conn.close()
-
-    enviar_codigo_verificacion(data.email, codigo)
-    return {"mensaje": "Código reenviado a tu email"}
+    try:
+        cur.execute("SELECT id, email FROM usuarios WHERE email = %s", (data.email,))
+        user = cur.fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="Email no encontrado")
+        codigo = generar_codigo()
+        expira = datetime.utcnow() + timedelta(minutes=10)
+        cur.execute(
+            "UPDATE usuarios SET codigo_verificacion = %s, codigo_expira = %s WHERE id = %s",
+            (codigo, expira, user[0])
+        )
+        conn.commit()
+        enviar_codigo_verificacion(data.email, codigo)
+        return {"mensaje": "Código reenviado a tu email"}
+    finally:
+        cur.close()
+        release_connection(conn)
 
 @router.post("/login")
 def login(data: LoginRequest):
     conn = get_connection()
     cur  = conn.cursor()
-    cur.execute(
-        "SELECT id, nombre, email, usuario, contrasena, verificado FROM usuarios WHERE usuario = %s",
-        (data.usuario,)
-    )
-    user = cur.fetchone()
-    cur.close()
-    conn.close()
-
-    if not user or not verify_password(data.contrasena, user[4]):
-        raise HTTPException(status_code=401, detail="Credenciales incorrectas")
-
-    if not user[5]:
-        raise HTTPException(status_code=403, detail="Cuenta no verificada. Revisa tu email.")
-
-    token = crear_token({"sub": str(user[0]), "usuario": user[3]})
-    return {
-        "token": token,
-        "user": {"id": user[0], "nombre": user[1], "email": user[2]}
-    }
+    try:
+        cur.execute(
+            "SELECT id, nombre, email, usuario, contrasena, verificado FROM usuarios WHERE usuario = %s",
+            (data.usuario,)
+        )
+        user = cur.fetchone()
+        if not user or not verify_password(data.contrasena, user[4]):
+            raise HTTPException(status_code=401, detail="Credenciales incorrectas")
+        if not user[5]:
+            raise HTTPException(status_code=403, detail="Cuenta no verificada. Revisa tu email.")
+        token = crear_token({"sub": str(user[0]), "usuario": user[3]})
+        return {"token": token, "user": {"id": user[0], "nombre": user[1], "email": user[2]}}
+    finally:
+        cur.close()
+        release_connection(conn)
 
 @router.post("/recuperar-password")
 def recuperar_password(data: RecuperarPassword):
     conn = get_connection()
     cur  = conn.cursor()
-    cur.execute("SELECT id, email FROM usuarios WHERE email = %s", (data.email,))
-    user = cur.fetchone()
-
-    if not user:
-        raise HTTPException(status_code=404, detail="Email no encontrado")
-
-    codigo = generar_codigo()
-    expira = datetime.utcnow() + timedelta(minutes=10)
-    cur.execute(
-        "UPDATE usuarios SET codigo_verificacion = %s, codigo_expira = %s WHERE id = %s",
-        (codigo, expira, user[0])
-    )
-    conn.commit()
-    cur.close()
-    conn.close()
-
-    enviar_codigo_reset(data.email, codigo)
-    return {"mensaje": "Código enviado a tu email"}
+    try:
+        cur.execute("SELECT id, email FROM usuarios WHERE email = %s", (data.email,))
+        user = cur.fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="Email no encontrado")
+        codigo = generar_codigo()
+        expira = datetime.utcnow() + timedelta(minutes=10)
+        cur.execute(
+            "UPDATE usuarios SET codigo_verificacion = %s, codigo_expira = %s WHERE id = %s",
+            (codigo, expira, user[0])
+        )
+        conn.commit()
+        enviar_codigo_reset(data.email, codigo)
+        return {"mensaje": "Código enviado a tu email"}
+    finally:
+        cur.close()
+        release_connection(conn)
 
 @router.post("/reset-password")
 def reset_password(data: ResetPassword):
     conn = get_connection()
     cur  = conn.cursor()
-    cur.execute(
-        "SELECT id, codigo_verificacion, codigo_expira FROM usuarios WHERE email = %s",
-        (data.email,)
-    )
-    user = cur.fetchone()
-
-    if not user:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
-
-    if user[1] != data.codigo:
-        raise HTTPException(status_code=400, detail="Código incorrecto")
-
-    if datetime.utcnow() > user[2]:
-        raise HTTPException(status_code=400, detail="Código expirado")
-
-    hashed = hash_password(data.nueva_contrasena)
-    cur.execute(
-        "UPDATE usuarios SET contrasena = %s, codigo_verificacion = NULL WHERE id = %s",
-        (hashed, user[0])
-    )
-    conn.commit()
-    cur.close()
-    conn.close()
-
-    return {"mensaje": "Contraseña actualizada correctamente ✅"}
+    try:
+        cur.execute(
+            "SELECT id, codigo_verificacion, codigo_expira FROM usuarios WHERE email = %s",
+            (data.email,)
+        )
+        user = cur.fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        if user[1] != data.codigo:
+            raise HTTPException(status_code=400, detail="Código incorrecto")
+        if datetime.utcnow() > user[2]:
+            raise HTTPException(status_code=400, detail="Código expirado")
+        hashed = hash_password(data.nueva_contrasena)
+        cur.execute(
+            "UPDATE usuarios SET contrasena = %s, codigo_verificacion = NULL WHERE id = %s",
+            (hashed, user[0])
+        )
+        conn.commit()
+        return {"mensaje": "Contraseña actualizada correctamente ✅"}
+    finally:
+        cur.close()
+        release_connection(conn)
 
 @router.post("/token-sensor")
 def token_sensor(data: LoginRequest):
     conn = get_connection()
     cur  = conn.cursor()
-    cur.execute(
-        "SELECT id, nombre, email, usuario, contrasena FROM usuarios WHERE usuario = %s",
-        (data.usuario,)
-    )
-    user = cur.fetchone()
-    cur.close()
-    conn.close()
-
-    if not user or not verify_password(data.contrasena, user[4]):
-        raise HTTPException(status_code=401, detail="Credenciales incorrectas")
-
-    payload = {"sub": str(user[0]), "usuario": user[3], "tipo": "sensor"}
-    token   = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
-    return {"token": token, "mensaje": "Token permanente para ESP32 generado ✅"}
+    try:
+        cur.execute(
+            "SELECT id, nombre, email, usuario, contrasena FROM usuarios WHERE usuario = %s",
+            (data.usuario,)
+        )
+        user = cur.fetchone()
+        if not user or not verify_password(data.contrasena, user[4]):
+            raise HTTPException(status_code=401, detail="Credenciales incorrectas")
+        payload = {"sub": str(user[0]), "usuario": user[3], "tipo": "sensor"}
+        token   = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+        return {"token": token, "mensaje": "Token permanente para ESP32 generado ✅"}
+    finally:
+        cur.close()
+        release_connection(conn)

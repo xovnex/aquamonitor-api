@@ -1,7 +1,8 @@
 # ============================================================
-# database.py – Conexión a Neon PostgreSQL
+# database.py – Conexión a Neon PostgreSQL con connection pool
 # ============================================================
 import psycopg2
+from psycopg2 import pool
 import os
 from dotenv import load_dotenv
 
@@ -9,8 +10,20 @@ load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+# Pool de conexiones — mínimo 1, máximo 5 simultáneas
+connection_pool = pool.SimpleConnectionPool(
+    minconn=1,
+    maxconn=5,
+    dsn=DATABASE_URL
+)
+
 def get_connection():
-    return psycopg2.connect(DATABASE_URL)
+    """Obtiene una conexión del pool"""
+    return connection_pool.getconn()
+
+def release_connection(conn):
+    """Devuelve la conexión al pool"""
+    connection_pool.putconn(conn)
 
 def init_db():
     """Crea las tablas si no existen"""
@@ -59,4 +72,4 @@ def init_db():
 
     conn.commit()
     cur.close()
-    conn.close()
+    release_connection(conn)
