@@ -6,7 +6,7 @@ import bcrypt
 from jose import jwt
 from datetime import datetime, timedelta
 import os
-from database import get_connection, release_connection
+from database import get_connection, release_connection, limpiar_pendientes_expirados
 from schemas import UsuarioCreate, LoginRequest, VerificarCodigo, RecuperarPassword, ResetPassword
 from routers.notificaciones import generar_codigo, enviar_codigo_verificacion, enviar_codigo_reset
 
@@ -36,10 +36,10 @@ def verificar_token(token: str):
 
 @router.post("/register")
 def register(data: UsuarioCreate):
+    limpiar_pendientes_expirados()  # borra los expirados antes de insertar
     conn = get_connection()
     cur  = conn.cursor()
     try:
-        # Verificar que el usuario o email no exista ya
         cur.execute(
             "SELECT id FROM usuarios WHERE email = %s OR usuario = %s",
             (data.email, data.usuario)
@@ -50,11 +50,8 @@ def register(data: UsuarioCreate):
         codigo = generar_codigo()
         expira = datetime.utcnow() + timedelta(minutes=10)
 
-        # Guarda temporalmente en memoria — NO en Neon todavía
-        # Solo manda el código al email
         enviar_codigo_verificacion(data.email, codigo)
 
-        # Guarda en una tabla temporal
         cur.execute("""
             INSERT INTO registros_pendientes 
             (nombre, email, usuario, contrasena, telefono, codigo, expira)
@@ -62,7 +59,7 @@ def register(data: UsuarioCreate):
             ON CONFLICT (email) DO UPDATE SET
                 codigo = EXCLUDED.codigo,
                 expira = EXCLUDED.expira
-        """, (data.nombre, data.email, data.usuario, 
+        """, (data.nombre, data.email, data.usuario,
               hash_password(data.contrasena), data.telefono, codigo, expira))
         conn.commit()
 
@@ -85,7 +82,6 @@ def verificar(data: VerificarCodigo):
     conn = get_connection()
     cur  = conn.cursor()
     try:
-        # Busca en registros pendientes
         cur.execute(
             "SELECT nombre, email, usuario, contrasena, telefono, codigo, expira FROM registros_pendientes WHERE email = %s",
             (data.email,)
@@ -99,7 +95,6 @@ def verificar(data: VerificarCodigo):
         if datetime.utcnow() > pendiente[6]:
             raise HTTPException(status_code=400, detail="Código expirado, solicita uno nuevo")
 
-        # Ahora sí guarda en usuarios
         cur.execute("""
             INSERT INTO usuarios (nombre, email, usuario, contrasena, telefono, verificado)
             VALUES (%s, %s, %s, %s, %s, TRUE)
@@ -107,10 +102,7 @@ def verificar(data: VerificarCodigo):
         """, (pendiente[0], pendiente[1], pendiente[2], pendiente[3], pendiente[4]))
         user = cur.fetchone()
 
-        # Crea configuración por defecto
         cur.execute("INSERT INTO configuraciones (usuario_id) VALUES (%s)", (user[0],))
-
-        # Elimina el registro pendiente
         cur.execute("DELETE FROM registros_pendientes WHERE email = %s", (data.email,))
 
         conn.commit()

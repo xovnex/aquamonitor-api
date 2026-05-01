@@ -10,7 +10,6 @@ load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Pool de conexiones — mínimo 1, máximo 5 simultáneas
 connection_pool = pool.SimpleConnectionPool(
     minconn=1,
     maxconn=5,
@@ -84,6 +83,15 @@ def init_db():
         );
     """)
 
+    conn.commit()
+    cur.close()
+    release_connection(conn)
+
+def limpiar_pendientes_expirados():
+    """Borra registros pendientes cuyo código ya expiró"""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM registros_pendientes WHERE expira < NOW();")
     conn.commit()
     cur.close()
     release_connection(conn)

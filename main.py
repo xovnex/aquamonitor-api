@@ -6,13 +6,13 @@ import httpx
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from database import init_db
+from database import init_db, limpiar_pendientes_expirados
 from routers import auth, consumo, configuracion, analisis
 
 
 async def ping_propio():
     while True:
-        await asyncio.sleep(14 * 60)  # cada 14 minutos
+        await asyncio.sleep(14 * 60)
         try:
             async with httpx.AsyncClient() as client:
                 await client.get("https://aquamonitor-api-1.onrender.com/ping")
@@ -23,13 +23,13 @@ async def ping_propio():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    limpiar_pendientes_expirados()  # limpia basura de arranques anteriores
     asyncio.create_task(ping_propio())
     yield
 
 
 app = FastAPI(title="AquaMonitor API", version="1.0.0", lifespan=lifespan)
 
-# CORS – permite peticiones desde cualquier origen
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -38,7 +38,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Rutas
 app.include_router(auth.router)
 app.include_router(consumo.router)
 app.include_router(configuracion.router)
