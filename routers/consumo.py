@@ -3,6 +3,8 @@
 # ============================================================
 from fastapi import APIRouter, HTTPException, Header
 from datetime import date, timedelta
+from zoneinfo import ZoneInfo
+from datetime import datetime
 from database import get_connection, release_connection
 from routers.auth import verificar_token
 from routers.notificaciones import alerta_consumo_alto, alerta_fuga_detectada
@@ -10,7 +12,12 @@ from schemas import SensorData
 
 router = APIRouter(prefix="/consumo", tags=["consumo"])
 
+LIMA_TZ = ZoneInfo("America/Lima")
 DIAS_ES = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
+
+def hoy_lima() -> date:
+    """Retorna la fecha actual en zona horaria de Lima (UTC-5)."""
+    return datetime.now(LIMA_TZ).date()
 
 def get_user_id(authorization: str):
     if not authorization or not authorization.startswith("Bearer "):
@@ -40,7 +47,7 @@ def consumo_hoy(authorization: str = Header(None)):
     try:
         cfg = get_config(cur, usuario_id)
         limite, personas = cfg[0], cfg[1]
-        hoy = date.today()
+        hoy = hoy_lima()
         cur.execute(
             "SELECT litros, flujo_actual, temperatura_agua FROM consumos WHERE usuario_id = %s AND fecha = %s",
             (usuario_id, hoy)
@@ -72,7 +79,7 @@ def consumo_semanal(authorization: str = Header(None)):
     try:
         cfg = get_config(cur, usuario_id)
         limite = cfg[0]
-        hoy = date.today()
+        hoy = hoy_lima()
         resultado = []
         for i in range(6, -1, -1):
             dia = hoy - timedelta(days=i)
@@ -99,7 +106,7 @@ def consumo_mensual(authorization: str = Header(None)):
     try:
         cfg = get_config(cur, usuario_id)
         limite = cfg[0]
-        hoy = date.today()
+        hoy = hoy_lima()
         resultado = []
         for i in range(29, -1, -1):
             dia = hoy - timedelta(days=i)
@@ -124,7 +131,7 @@ def recibir_sensor(data: SensorData, authorization: str = Header(None)):
     conn = get_connection()
     cur  = conn.cursor()
     try:
-        hoy = date.today()
+        hoy = hoy_lima()
         cur.execute("""
             INSERT INTO consumos (usuario_id, fecha, litros, flujo_actual, temperatura_agua)
             VALUES (%s, %s, %s, %s, %s)
@@ -154,7 +161,7 @@ def recibir_sensor(data: SensorData, authorization: str = Header(None)):
         conn.commit()
 
         from datetime import datetime, timedelta
-        ahora = datetime.utcnow()
+        ahora = datetime.now(LIMA_TZ)
 
         if telefono:
             # Alerta consumo — solo si pasó más de 1 hora desde la última
