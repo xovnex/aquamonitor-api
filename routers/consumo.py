@@ -49,10 +49,11 @@ def consumo_hoy(authorization: str = Header(None)):
         limite, personas = cfg[0], cfg[1]
         hoy = hoy_lima()
         cur.execute(
-            "SELECT litros, flujo_actual, temperatura_agua FROM consumos WHERE usuario_id = %s AND fecha = %s",
+            "SELECT litros, flujo_actual, temperatura_agua, ultima_lectura FROM consumos WHERE usuario_id = %s AND fecha = %s",
             (usuario_id, hoy)
         )
         row = cur.fetchone()
+        ultima_lectura = row[3].isoformat() if row and row[3] else None
         return {
             "fecha": str(hoy),
             "litros": round(row[0], 2) if row else 0,
@@ -62,9 +63,7 @@ def consumo_hoy(authorization: str = Header(None)):
             "temperaturaAgua": row[2] if row else 18,
             "sensor": {
                 "id": "ESP32-001",
-                "estado": "online",
-                "bateria": 87,
-                "ultimaActualizacion": str(hoy)
+                "ultimaLectura": ultima_lectura,
             }
         }
     finally:
@@ -133,13 +132,14 @@ def recibir_sensor(data: SensorData, authorization: str = Header(None)):
     try:
         hoy = hoy_lima()
         cur.execute("""
-            INSERT INTO consumos (usuario_id, fecha, litros, flujo_actual, temperatura_agua)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO consumos (usuario_id, fecha, litros, flujo_actual, temperatura_agua, ultima_lectura)
+            VALUES (%s, %s, %s, %s, %s, NOW())
             ON CONFLICT (usuario_id, fecha)
             DO UPDATE SET
                 litros = ROUND((consumos.litros + EXCLUDED.litros)::numeric, 2),
                 flujo_actual = ROUND(EXCLUDED.flujo_actual::numeric, 2),
-                temperatura_agua = EXCLUDED.temperatura_agua
+                temperatura_agua = EXCLUDED.temperatura_agua,
+                ultima_lectura = NOW()
         """, (usuario_id, hoy, data.litros, data.flujo_actual, data.temperatura_agua))
         
 

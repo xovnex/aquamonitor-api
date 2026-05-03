@@ -52,9 +52,15 @@ def init_db():
             litros FLOAT NOT NULL DEFAULT 0,
             flujo_actual FLOAT DEFAULT 0,
             temperatura_agua FLOAT DEFAULT 18,
+            ultima_lectura TIMESTAMP DEFAULT NULL,
             created_at TIMESTAMP DEFAULT NOW(),
             UNIQUE(usuario_id, fecha)
         );
+    """)
+
+    # Agrega la columna si ya existe la tabla sin ella
+    cur.execute("""
+        ALTER TABLE consumos ADD COLUMN IF NOT EXISTS ultima_lectura TIMESTAMP DEFAULT NULL;
     """)
 
     cur.execute("""
