@@ -48,10 +48,10 @@ def consumo_hoy(authorization: str = Header(None)):
         row = cur.fetchone()
         return {
             "fecha": str(hoy),
-            "litros": row[0] if row else 0,
+            "litros": round(row[0], 2) if row else 0,
             "limite": limite,
             "personas": personas,
-            "flujoActual": row[1] if row else 0,
+            "flujoActual": round(row[1], 2) if row else 0,
             "temperaturaAgua": row[2] if row else 18,
             "sensor": {
                 "id": "ESP32-001",
@@ -130,10 +130,11 @@ def recibir_sensor(data: SensorData, authorization: str = Header(None)):
             VALUES (%s, %s, %s, %s, %s)
             ON CONFLICT (usuario_id, fecha)
             DO UPDATE SET
-                litros = consumos.litros + EXCLUDED.litros,
-                flujo_actual = EXCLUDED.flujo_actual,
+                litros = ROUND((consumos.litros + EXCLUDED.litros)::numeric, 2),
+                flujo_actual = ROUND(EXCLUDED.flujo_actual::numeric, 2),
                 temperatura_agua = EXCLUDED.temperatura_agua
         """, (usuario_id, hoy, data.litros, data.flujo_actual, data.temperatura_agua))
+        
 
         cfg = get_config(cur, usuario_id)
         limite         = cfg[0]
@@ -169,7 +170,7 @@ def recibir_sensor(data: SensorData, authorization: str = Header(None)):
                     cur2.close()
 
             # Alerta fuga — solo si pasó más de 1 hora desde la última
-            if alerta_fuga and data.flujo_actual > 2.5:
+            if alerta_fuga and data.flujo_actual > 10:
                 if not ultima_alerta_fuga or ahora - ultima_alerta_fuga > timedelta(hours=1):
                     alerta_fuga_detectada(telefono, data.flujo_actual)
                     cur3 = conn.cursor()
