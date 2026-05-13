@@ -2,7 +2,7 @@
 # routers/configuracion.py – Configuración del usuario
 # ============================================================
 from fastapi import APIRouter, Header
-from database import get_connection, release_connection
+from database import get_db
 from routers.auth import verificar_token
 from schemas import ConfiguracionUpdate
 
@@ -16,9 +16,8 @@ def get_user_id(authorization: str):
 @router.get("/historial")
 def historial(page: int = 1, limit: int = 15, authorization: str = Header(None)):
     usuario_id = get_user_id(authorization)
-    conn = get_connection()
-    cur  = conn.cursor()
-    try:
+    with get_db() as conn:
+        cur = conn.cursor()
         offset = (page - 1) * limit
         cur.execute(
             "SELECT fecha, litros FROM consumos WHERE usuario_id = %s ORDER BY fecha DESC LIMIT %s OFFSET %s",
@@ -44,17 +43,14 @@ def historial(page: int = 1, limit: int = 15, authorization: str = Header(None))
             }
             for idx, r in enumerate(rows)
         ]
-        return {"items": items, "total": total}
-    finally:
         cur.close()
-        release_connection(conn)
+        return {"items": items, "total": total}
 
 @router.post("/configuracion")
 def guardar_configuracion(data: ConfiguracionUpdate, authorization: str = Header(None)):
     usuario_id = get_user_id(authorization)
-    conn = get_connection()
-    cur  = conn.cursor()
-    try:
+    with get_db() as conn:
+        cur = conn.cursor()
         cur.execute("""
             INSERT INTO configuraciones (usuario_id, limite_diario, personas, notificaciones, alerta_fuga)
             VALUES (%s, %s, %s, %s, %s)
@@ -67,7 +63,5 @@ def guardar_configuracion(data: ConfiguracionUpdate, authorization: str = Header
                 updated_at = NOW()
         """, (usuario_id, data.limite_diario, data.personas, data.notificaciones, data.alerta_fuga))
         conn.commit()
-        return {"success": True, "config": data}
-    finally:
         cur.close()
-        release_connection(conn)
+        return {"success": True, "config": data}

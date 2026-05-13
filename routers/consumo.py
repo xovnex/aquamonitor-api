@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Header
 from datetime import date, timedelta
 from zoneinfo import ZoneInfo
 from datetime import datetime
-from database import get_connection, release_connection
+from database import get_db
 from routers.auth import verificar_token
 from routers.notificaciones import alerta_consumo_alto, alerta_fuga_detectada
 from schemas import SensorData
@@ -42,9 +42,8 @@ def get_telefono(cur, usuario_id):
 @router.get("/hoy")
 def consumo_hoy(authorization: str = Header(None)):
     usuario_id = get_user_id(authorization)
-    conn = get_connection()
-    cur  = conn.cursor()
-    try:
+    with get_db() as conn:
+        cur = conn.cursor()
         cfg = get_config(cur, usuario_id)
         limite, personas = cfg[0], cfg[1]
         hoy = hoy_lima()
@@ -54,6 +53,7 @@ def consumo_hoy(authorization: str = Header(None)):
         )
         row = cur.fetchone()
         ultima_lectura = row[3].isoformat() if row and row[3] else None
+        cur.close()
         return {
             "fecha": str(hoy),
             "litros": round(row[0], 2) if row else 0,
@@ -66,16 +66,12 @@ def consumo_hoy(authorization: str = Header(None)):
                 "ultimaLectura": ultima_lectura,
             }
         }
-    finally:
-        cur.close()
-        release_connection(conn)
 
 @router.get("/semanal")
 def consumo_semanal(authorization: str = Header(None)):
     usuario_id = get_user_id(authorization)
-    conn = get_connection()
-    cur  = conn.cursor()
-    try:
+    with get_db() as conn:
+        cur = conn.cursor()
         cfg = get_config(cur, usuario_id)
         limite = cfg[0]
         hoy = hoy_lima()
@@ -92,17 +88,14 @@ def consumo_semanal(authorization: str = Header(None)):
                 "litros": row[0] if row else 0,
                 "limite": limite
             })
-        return resultado
-    finally:
         cur.close()
-        release_connection(conn)
+        return resultado
 
 @router.get("/mensual")
 def consumo_mensual(authorization: str = Header(None)):
     usuario_id = get_user_id(authorization)
-    conn = get_connection()
-    cur  = conn.cursor()
-    try:
+    with get_db() as conn:
+        cur = conn.cursor()
         cfg = get_config(cur, usuario_id)
         limite = cfg[0]
         hoy = hoy_lima()
@@ -119,17 +112,14 @@ def consumo_mensual(authorization: str = Header(None)):
                 "litros": row[0] if row else 0,
                 "limite": limite
             })
-        return resultado
-    finally:
         cur.close()
-        release_connection(conn)
+        return resultado
 
 @router.post("/sensor")
 def recibir_sensor(data: SensorData, authorization: str = Header(None)):
     usuario_id = get_user_id(authorization)
-    conn = get_connection()
-    cur  = conn.cursor()
-    try:
+    with get_db() as conn:
+        cur = conn.cursor()
         hoy = hoy_lima()
         cur.execute("""
             INSERT INTO consumos (usuario_id, fecha, litros, flujo_actual, temperatura_agua, ultima_lectura)
@@ -141,7 +131,6 @@ def recibir_sensor(data: SensorData, authorization: str = Header(None)):
                 temperatura_agua = EXCLUDED.temperatura_agua,
                 ultima_lectura = NOW()
         """, (usuario_id, hoy, data.litros, data.flujo_actual, data.temperatura_agua))
-        
 
         cfg = get_config(cur, usuario_id)
         limite         = cfg[0]
@@ -153,7 +142,7 @@ def recibir_sensor(data: SensorData, authorization: str = Header(None)):
             (usuario_id, hoy)
         )
         row = cur.fetchone()
-        litros_total        = row[0] if row else 0
+        litros_total          = row[0] if row else 0
         ultima_alerta_consumo = row[1] if row else None
         ultima_alerta_fuga    = row[2] if row else None
 
@@ -188,7 +177,5 @@ def recibir_sensor(data: SensorData, authorization: str = Header(None)):
                     conn.commit()
                     cur3.close()
 
-        return {"success": True, "message": "Datos recibidos"}
-    finally:
         cur.close()
-        release_connection(conn)
+        return {"success": True, "message": "Datos recibidos"}
