@@ -112,21 +112,32 @@ def historial(page: int = 1, limit: int = 15, authorization: str = Header(None))
         cur.execute("SELECT COUNT(*) FROM consumos WHERE usuario_id = %s", (usuario_id,))
         total = cur.fetchone()[0]
         cur.execute(
-            "SELECT limite_diario FROM configuraciones WHERE usuario_id = %s",
+            """
+            SELECT limite_diario, costo_por_litro
+            FROM configuraciones WHERE usuario_id = %s
+            """,
             (usuario_id,),
         )
         cfg = cur.fetchone()
         limite = cfg[0] if cfg else 200
+        costo_por_litro = (
+            cfg[1] if cfg and cfg[1] is not None else DEFAULT_COSTO_POR_LITRO
+        )
         items = [
             {
                 "id": idx + 1 + offset,
                 "fecha": str(r[0]),
                 "litros": round(r[1], 2),
                 "limite": limite,
+                "costo": round(r[1] * costo_por_litro, 2),
                 "estado": "excedido" if r[1] > limite else "normal",
                 "ahorro": round(max(0, limite - r[1]), 2),
             }
             for idx, r in enumerate(rows)
         ]
         cur.close()
-        return {"items": items, "total": total}
+        return {
+            "items": items,
+            "total": total,
+            "costo_por_litro": costo_por_litro,
+        }
