@@ -14,6 +14,7 @@ router = APIRouter(prefix="/consumo", tags=["consumo"])
 
 LIMA_TZ = ZoneInfo("America/Lima")
 DIAS_ES = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
+DEFAULT_COSTO_POR_LITRO = 0.005
 
 def hoy_lima() -> date:
     """Retorna la fecha actual en zona horaria de Lima (UTC-5)."""
@@ -28,11 +29,17 @@ def get_user_id(authorization: str):
 
 def get_config(cur, usuario_id):
     cur.execute(
-        "SELECT limite_diario, personas, notificaciones, alerta_fuga FROM configuraciones WHERE usuario_id = %s",
-        (usuario_id,)
+        """
+        SELECT limite_diario, personas, notificaciones, alerta_fuga, costo_por_litro
+        FROM configuraciones WHERE usuario_id = %s
+        """,
+        (usuario_id,),
     )
     cfg = cur.fetchone()
-    return cfg if cfg else (200, 3, True, True)
+    if cfg:
+        costo = cfg[4] if cfg[4] is not None else DEFAULT_COSTO_POR_LITRO
+        return (cfg[0], cfg[1], cfg[2], cfg[3], costo)
+    return (200, 3, True, True, DEFAULT_COSTO_POR_LITRO)
 
 def get_telefono(cur, usuario_id):
     cur.execute("SELECT telefono FROM usuarios WHERE id = %s", (usuario_id,))
@@ -45,26 +52,30 @@ def consumo_hoy(authorization: str = Header(None)):
     with get_db() as conn:
         cur = conn.cursor()
         cfg = get_config(cur, usuario_id)
-        limite, personas = cfg[0], cfg[1]
+        limite, personas, _, _, costo_por_litro = cfg
         hoy = hoy_lima()
         cur.execute(
             "SELECT litros, flujo_actual, temperatura_agua, ultima_lectura FROM consumos WHERE usuario_id = %s AND fecha = %s",
-            (usuario_id, hoy)
+            (usuario_id, hoy),
         )
         row = cur.fetchone()
         ultima_lectura = row[3].isoformat() if row and row[3] else None
+        litros = round(row[0], 2) if row else 0
+        costo_estimado = round(litros * costo_por_litro, 2)
         cur.close()
         return {
             "fecha": str(hoy),
-            "litros": round(row[0], 2) if row else 0,
+            "litros": litros,
             "limite": limite,
             "personas": personas,
+            "costo_por_litro": costo_por_litro,
+            "costo_estimado": costo_estimado,
             "flujoActual": round(row[1], 2) if row else 0,
             "temperaturaAgua": row[2] if row else 18,
             "sensor": {
                 "id": "ESP32-001",
                 "ultimaLectura": ultima_lectura,
-            }
+            },
         }
 
 @router.get("/semanal")

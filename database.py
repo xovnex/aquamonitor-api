@@ -91,8 +91,14 @@ def init_db():
                 personas INTEGER DEFAULT 3,
                 notificaciones BOOLEAN DEFAULT TRUE,
                 alerta_fuga BOOLEAN DEFAULT TRUE,
+                costo_por_litro FLOAT DEFAULT 0.005,
                 updated_at TIMESTAMP DEFAULT NOW()
             );
+        """)
+
+        cur.execute("""
+            ALTER TABLE configuraciones
+            ADD COLUMN IF NOT EXISTS costo_por_litro FLOAT DEFAULT 0.005;
         """)
 
         cur.execute("""

@@ -1,7 +1,7 @@
 # ============================================================
 # schemas.py – Modelos de datos (Pydantic)
 # ============================================================
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import Optional
 from datetime import date
 
@@ -37,6 +37,8 @@ class ConsumoHoy(BaseModel):
     litros: float
     limite: float
     personas: int
+    costo_por_litro: float
+    costo_estimado: float
     flujo_actual: float
     temperatura_agua: float
     sensor: dict
@@ -56,6 +58,14 @@ class ConfiguracionUpdate(BaseModel):
     personas: Optional[int] = 3
     notificaciones: Optional[bool] = True
     alerta_fuga: Optional[bool] = True
+    costo_por_litro: Optional[float] = Field(default=0.005, ge=0, le=0.05)
+
+class ConfiguracionResponse(BaseModel):
+    limite_diario: float
+    personas: int
+    notificaciones: bool
+    alerta_fuga: bool
+    costo_por_litro: float
 
 class SensorData(BaseModel):
     litros: float
