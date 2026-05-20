@@ -121,10 +121,10 @@ def historial(page: int = 1, limit: int = 15, authorization: str = Header(None))
             {
                 "id": idx + 1 + offset,
                 "fecha": str(r[0]),
-                "litros": r[1],
+                "litros": round(r[1], 2),
                 "limite": limite,
                 "estado": "excedido" if r[1] > limite else "normal",
-                "ahorro": max(0, limite - r[1]),
+                "ahorro": round(max(0, limite - r[1]), 2),
             }
             for idx, r in enumerate(rows)
         ]
