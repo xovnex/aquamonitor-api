@@ -15,6 +15,7 @@ router = APIRouter(prefix="/consumo", tags=["consumo"])
 LIMA_TZ = ZoneInfo("America/Lima")
 DIAS_ES = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
 DEFAULT_COSTO_POR_LITRO = 0.005
+SENSOR_TIMEOUT_SEC = 180
 
 def hoy_lima() -> date:
     """Retorna la fecha actual en zona horaria de Lima (UTC-5)."""
@@ -46,6 +47,21 @@ def get_telefono(cur, usuario_id):
     row = cur.fetchone()
     return row[0] if row and row[0] else None
 
+def evaluar_sensor(ultima_lectura):
+    """En línea solo si el ESP32 envió datos en los últimos N segundos."""
+    if ultima_lectura is None:
+        return False, None, None
+
+    if ultima_lectura.tzinfo is None:
+        ultima = ultima_lectura.replace(tzinfo=LIMA_TZ)
+    else:
+        ultima = ultima_lectura.astimezone(LIMA_TZ)
+
+    ahora = datetime.now(LIMA_TZ)
+    diff = (ahora - ultima).total_seconds()
+    en_linea = 0 <= diff <= SENSOR_TIMEOUT_SEC
+    return en_linea, ultima.isoformat(), int(diff)
+
 @router.get("/hoy")
 def consumo_hoy(authorization: str = Header(None)):
     usuario_id = get_user_id(authorization)
@@ -59,8 +75,10 @@ def consumo_hoy(authorization: str = Header(None)):
             (usuario_id, hoy),
         )
         row = cur.fetchone()
-        ultima_lectura = row[3].isoformat() if row and row[3] else None
+        ultima_raw = row[3] if row else None
+        en_linea, ultima_lectura, segundos_sin_datos = evaluar_sensor(ultima_raw)
         litros = round(row[0], 2) if row else 0
+        flujo = round(row[1], 2) if row and en_linea else 0
         costo_estimado = round(litros * costo_por_litro, 2)
         cur.close()
         return {
@@ -70,11 +88,13 @@ def consumo_hoy(authorization: str = Header(None)):
             "personas": personas,
             "costo_por_litro": costo_por_litro,
             "costo_estimado": costo_estimado,
-            "flujoActual": round(row[1], 2) if row else 0,
+            "flujoActual": flujo,
             "temperaturaAgua": row[2] if row else 18,
             "sensor": {
                 "id": "ESP32-001",
+                "enLinea": en_linea,
                 "ultimaLectura": ultima_lectura,
+                "segundosSinDatos": segundos_sin_datos,
             },
         }
 

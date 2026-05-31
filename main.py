@@ -11,12 +11,13 @@ from routers import auth, consumo, configuracion, analisis
 
 
 async def ping_propio():
+    """Mantiene la API despierta en Render. No envía datos del ESP32."""
     while True:
         await asyncio.sleep(14 * 60)
         try:
             async with httpx.AsyncClient() as client:
                 await client.get("https://aquamonitor-api-1.onrender.com/ping")
-        except:
+        except Exception:
             pass
 
 
