@@ -84,6 +84,14 @@ def init_db():
         """)
 
         cur.execute("""
+            ALTER TABLE consumos ADD COLUMN IF NOT EXISTS ultima_alerta_consumo TIMESTAMP DEFAULT NULL;
+        """)
+
+        cur.execute("""
+            ALTER TABLE consumos ADD COLUMN IF NOT EXISTS ultima_alerta_fuga TIMESTAMP DEFAULT NULL;
+        """)
+
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS configuraciones (
                 id SERIAL PRIMARY KEY,
                 usuario_id INTEGER REFERENCES usuarios(id) UNIQUE,

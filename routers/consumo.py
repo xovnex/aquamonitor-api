@@ -5,7 +5,10 @@ from fastapi import APIRouter, HTTPException, Header
 from datetime import date, timedelta
 from zoneinfo import ZoneInfo
 from datetime import datetime
+
+UTC_TZ = ZoneInfo("UTC")
 from database import get_db
+from psycopg2 import errors as pg_errors
 from routers.auth import verificar_token
 from routers.notificaciones import alerta_consumo_alto, alerta_fuga_detectada
 from schemas import SensorData
@@ -16,6 +19,14 @@ LIMA_TZ = ZoneInfo("America/Lima")
 DIAS_ES = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
 DEFAULT_COSTO_POR_LITRO = 0.005
 SENSOR_TIMEOUT_SEC = 180
+
+def to_float(value, default=0.0):
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 def hoy_lima() -> date:
     """Retorna la fecha actual en zona horaria de Lima (UTC-5)."""
@@ -29,13 +40,28 @@ def get_user_id(authorization: str):
     return int(payload["sub"])
 
 def get_config(cur, usuario_id):
-    cur.execute(
-        """
-        SELECT limite_diario, personas, notificaciones, alerta_fuga, costo_por_litro
-        FROM configuraciones WHERE usuario_id = %s
-        """,
-        (usuario_id,),
-    )
+    try:
+        cur.execute(
+            """
+            SELECT limite_diario, personas, notificaciones, alerta_fuga, costo_por_litro
+            FROM configuraciones WHERE usuario_id = %s
+            """,
+            (usuario_id,),
+        )
+    except pg_errors.UndefinedColumn:
+        cur.connection.rollback()
+        cur.execute(
+            """
+            SELECT limite_diario, personas, notificaciones, alerta_fuga
+            FROM configuraciones WHERE usuario_id = %s
+            """,
+            (usuario_id,),
+        )
+        cfg = cur.fetchone()
+        if cfg:
+            return (cfg[0], cfg[1], cfg[2], cfg[3], DEFAULT_COSTO_POR_LITRO)
+        return (200, 3, True, True, DEFAULT_COSTO_POR_LITRO)
+
     cfg = cur.fetchone()
     if cfg:
         costo = cfg[4] if cfg[4] is not None else DEFAULT_COSTO_POR_LITRO
@@ -52,15 +78,31 @@ def evaluar_sensor(ultima_lectura):
     if ultima_lectura is None:
         return False, None, None
 
-    if ultima_lectura.tzinfo is None:
-        ultima = ultima_lectura.replace(tzinfo=LIMA_TZ)
-    else:
-        ultima = ultima_lectura.astimezone(LIMA_TZ)
+    try:
+        if isinstance(ultima_lectura, str):
+            ultima_lectura = datetime.fromisoformat(
+                ultima_lectura.replace("Z", "+00:00")
+            )
+        elif isinstance(ultima_lectura, date) and not isinstance(
+            ultima_lectura, datetime
+        ):
+            ultima_lectura = datetime.combine(
+                ultima_lectura, datetime.min.time()
+            )
 
-    ahora = datetime.now(LIMA_TZ)
-    diff = (ahora - ultima).total_seconds()
-    en_linea = 0 <= diff <= SENSOR_TIMEOUT_SEC
-    return en_linea, ultima.isoformat(), int(diff)
+        if ultima_lectura.tzinfo is None:
+            # Neon/Postgres guarda TIMESTAMP sin zona en UTC
+            ultima = ultima_lectura.replace(tzinfo=UTC_TZ).astimezone(LIMA_TZ)
+        else:
+            ultima = ultima_lectura.astimezone(LIMA_TZ)
+
+        ahora = datetime.now(LIMA_TZ)
+        diff = max(0, (ahora - ultima).total_seconds())
+        en_linea = diff <= SENSOR_TIMEOUT_SEC
+        minutos_sin_datos = max(0, int(diff // 60))
+        return en_linea, ultima.isoformat(), minutos_sin_datos
+    except (TypeError, ValueError, AttributeError):
+        return False, None, None
 
 @router.get("/hoy")
 def consumo_hoy(authorization: str = Header(None)):
@@ -76,25 +118,26 @@ def consumo_hoy(authorization: str = Header(None)):
         )
         row = cur.fetchone()
         ultima_raw = row[3] if row else None
-        en_linea, ultima_lectura, segundos_sin_datos = evaluar_sensor(ultima_raw)
-        litros = round(row[0], 2) if row else 0
-        flujo = round(row[1], 2) if row and en_linea else 0
-        costo_estimado = round(litros * costo_por_litro, 2)
+        en_linea, ultima_lectura, minutos_sin_datos = evaluar_sensor(ultima_raw)
+        litros = round(to_float(row[0] if row else 0), 2)
+        flujo = round(to_float(row[1] if row else 0), 2) if row and en_linea else 0
+        costo_estimado = round(litros * to_float(costo_por_litro), 2)
         cur.close()
         return {
             "fecha": str(hoy),
             "litros": litros,
-            "limite": limite,
-            "personas": personas,
-            "costo_por_litro": costo_por_litro,
+            "limite": to_float(limite),
+            "personas": int(personas or 1),
+            "costo_por_litro": to_float(costo_por_litro, DEFAULT_COSTO_POR_LITRO),
             "costo_estimado": costo_estimado,
             "flujoActual": flujo,
-            "temperaturaAgua": row[2] if row else 18,
+            "temperaturaAgua": to_float(row[2] if row else 18, 18),
             "sensor": {
                 "id": "ESP32-001",
                 "enLinea": en_linea,
                 "ultimaLectura": ultima_lectura,
-                "segundosSinDatos": segundos_sin_datos,
+                "minutosSinDatos": minutos_sin_datos,
+                "segundosSinDatos": minutos_sin_datos * 60,
             },
         }
 
@@ -169,24 +212,37 @@ def recibir_sensor(data: SensorData, authorization: str = Header(None)):
         alerta_fuga    = cfg[3]
 
         cur.execute(
-            "SELECT litros, ultima_alerta_consumo, ultima_alerta_fuga FROM consumos WHERE usuario_id = %s AND fecha = %s",
-            (usuario_id, hoy)
+            """
+            SELECT litros, ultima_alerta_consumo, ultima_alerta_fuga
+            FROM consumos
+            WHERE usuario_id = %s AND fecha = %s
+            """,
+            (usuario_id, hoy),
         )
         row = cur.fetchone()
-        litros_total          = row[0] if row else 0
+        litros_total = to_float(row[0] if row else 0)
         ultima_alerta_consumo = row[1] if row else None
-        ultima_alerta_fuga    = row[2] if row else None
+        ultima_alerta_fuga = row[2] if row else None
 
         telefono = get_telefono(cur, usuario_id)
         conn.commit()
 
-        from datetime import datetime, timedelta
         ahora = datetime.now(LIMA_TZ)
 
+        def alerta_expirada(ultima_alerta):
+            if not ultima_alerta:
+                return True
+            if isinstance(ultima_alerta, datetime):
+                if ultima_alerta.tzinfo is None:
+                    ultima_alerta = ultima_alerta.replace(tzinfo=LIMA_TZ)
+                else:
+                    ultima_alerta = ultima_alerta.astimezone(LIMA_TZ)
+                return ahora - ultima_alerta > timedelta(hours=1)
+            return True
+
         if telefono:
-            # Alerta consumo — solo si pasó más de 1 hora desde la última
             if notificaciones and litros_total > limite:
-                if not ultima_alerta_consumo or ahora - ultima_alerta_consumo > timedelta(hours=1):
+                if alerta_expirada(ultima_alerta_consumo):
                     alerta_consumo_alto(telefono, litros_total, limite)
                     cur2 = conn.cursor()
                     cur2.execute(
@@ -196,9 +252,8 @@ def recibir_sensor(data: SensorData, authorization: str = Header(None)):
                     conn.commit()
                     cur2.close()
 
-            # Alerta fuga — solo si pasó más de 1 hora desde la última
-            if alerta_fuga and data.flujo_actual > 10:
-                if not ultima_alerta_fuga or ahora - ultima_alerta_fuga > timedelta(hours=1):
+            if alerta_fuga and to_float(data.flujo_actual) > 10:
+                if alerta_expirada(ultima_alerta_fuga):
                     alerta_fuga_detectada(telefono, data.flujo_actual)
                     cur3 = conn.cursor()
                     cur3.execute(

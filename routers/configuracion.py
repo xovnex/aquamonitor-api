@@ -10,6 +10,14 @@ router = APIRouter(tags=["configuracion"])
 
 DEFAULT_COSTO_POR_LITRO = 0.005
 
+def to_float(value, default=0.0):
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
 def get_user_id(authorization: str):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Token requerido")
@@ -127,17 +135,17 @@ def historial(page: int = 1, limit: int = 15, authorization: str = Header(None))
             {
                 "id": idx + 1 + offset,
                 "fecha": str(r[0]),
-                "litros": round(r[1], 2),
-                "limite": limite,
-                "costo": round(r[1] * costo_por_litro, 2),
-                "estado": "excedido" if r[1] > limite else "normal",
-                "ahorro": round(max(0, limite - r[1]), 2),
+                "litros": round(to_float(r[1]), 2),
+                "limite": to_float(limite),
+                "costo": round(to_float(r[1]) * to_float(costo_por_litro), 2),
+                "estado": "excedido" if to_float(r[1]) > to_float(limite) else "normal",
+                "ahorro": round(max(0, to_float(limite) - to_float(r[1])), 2),
             }
             for idx, r in enumerate(rows)
         ]
         cur.close()
         return {
             "items": items,
-            "total": total,
-            "costo_por_litro": costo_por_litro,
+            "total": int(total or 0),
+            "costo_por_litro": to_float(costo_por_litro, DEFAULT_COSTO_POR_LITRO),
         }
